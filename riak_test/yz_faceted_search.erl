@@ -65,7 +65,6 @@ confirm() ->
 
     ok = yz_rt:create_indexed_bucket_type(Node1, ?TYPE, ?INDEX,
                                           ?SCHEMANAME, ?FACETED_SCHEMA),
-    yokozuna_rt:commit(Cluster, ?INDEX),
 
     put_restaurants(Cluster, ?BUCKET),
     verify_faceted_search(Cluster, ?INDEX),
