@@ -20,6 +20,11 @@
 
 -type cluster() :: [node()].
 
+%% @doc Get {Host, Port} from `Cluster'.
+-spec host_port(cluster()) -> {host(), portnum()}.
+host_port(Cluster) ->
+    hd(yz_rt:host_entries(rt:connection_info(Cluster))).
+
 %% @doc Given a list of protobuff connections, close each one.
 %%
 %% @see open_pb_conns/1
@@ -369,7 +374,8 @@ search(Type, {Host, Port}, Index, Name, Term) ->
 search(Type, {Host, Port}, Index, Name0, Term0, Params0) ->
     Name = quote_unicode(Name0),
     Term = quote_unicode(Term0),
-    Params = "q=" ++ Name ++ ":" ++ Term ++ "&wt=json&" ++ Params0,
+    Params = "q=" ++ Name ++ ":" ++ Term ++ "&wt=json&" ++
+             urlencode_params(Params0),
     URL = case Type of
               solr ->
                   ?FMT("http://~s:~s/internal_solr/~s/select?~s",
@@ -385,6 +391,15 @@ integer_portnum(Port) when is_integer(Port) ->
     Port;
 integer_portnum(Port) when is_list(Port) ->
     list_to_integer(Port).
+
+%% @doc Encodes the proplist argument as a URL query string. If the argument
+%% is not a proplist, this function assumes that it is already a URL-encoded
+%% string and returns it unmodified.
+-spec urlencode_params([proplists:property()] | string()) -> string().
+urlencode_params([{_Key, _Value}|_Rest] = Params) ->
+    mochiweb_util:urlencode(Params);
+urlencode_params(String) ->
+    String.
 
 quote_unicode(Value) ->
     mochiweb_util:quote_plus(binary_to_list(unicode:characters_to_binary(Value))).

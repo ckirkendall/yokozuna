@@ -43,12 +43,14 @@
    <field name=\"name\" type=\"string\" indexed=\"true\" stored=\"true\"/>
    <field name=\"city\" type=\"string\" indexed=\"true\" stored=\"true\"/>
    <field name=\"state\" type=\"string\" indexed=\"true\" stored=\"true\"/>
+   <field name=\"price\" type=\"integer\" indexed=\"true\" stored=\"true\"/>
 </fields>
 <uniqueKey>_yz_id</uniqueKey>
 <types>
    <fieldType name=\"_yz_str\" class=\"solr.StrField\" sortMissingLast=\"true\" />
 
    <fieldType name=\"string\" class=\"solr.StrField\" sortMissingLast=\"true\" />
+   <fieldType name=\"integer\" class=\"solr.TrieIntField\" />
 </types>
 </schema>">>).
 
@@ -67,21 +69,22 @@ confirm() ->
                                           ?SCHEMANAME, ?FACETED_SCHEMA),
 
     put_restaurants(Cluster, ?BUCKET),
-    verify_faceted_search(Cluster, ?INDEX),
+    verify_field_faceting(Cluster, ?INDEX),
+    verify_query_faceting(Cluster, ?INDEX),
     pass.
 
 -define(RESTAURANTS,
         [
-         {<<"Senate">>, <<"Cincinnati">>, <<"Ohio">>},
-         {<<"Boca">>, <<"Cincinnati">>, <<"Ohio">>},
-         {<<"Terry's Turf Club">>, <<"Cincinnati">>, <<"Ohio">>},
-         {<<"Thurman Cafe">>, <<"Columbus">>, <<"Ohio">>},
-         {<<"Otto's">>, <<"Covington">>, <<"Kentucky">>}
+         {<<"Senate">>, <<"Cincinnati">>, <<"Ohio">>, 21},
+         {<<"Boca">>, <<"Cincinnati">>, <<"Ohio">>, 74},
+         {<<"Terry's Turf Club">>, <<"Cincinnati">>, <<"Ohio">>, 16},
+         {<<"Thurman Cafe">>, <<"Columbus">>, <<"Ohio">>, 9},
+         {<<"Otto's">>, <<"Covington">>, <<"Kentucky">>, 55}
         ]).
 
 put_restaurants(Cluster, Bucket) ->
-    Restaurants = [create_restaurant_json(Name, City, State) ||
-                   {Name, City, State} <- ?RESTAURANTS],
+    Restaurants = [create_restaurant_json(Name, City, State, Price) ||
+                   {Name, City, State, Price} <- ?RESTAURANTS],
     Keys = yokozuna_rt:gen_keys(length(Restaurants)),
     Pid = rt:pbc(hd(Cluster)),
     lists:foreach(fun({Key, Restaurant}) ->
@@ -90,22 +93,25 @@ put_restaurants(Cluster, Bucket) ->
                   lists:zip(Keys, Restaurants)),
     yokozuna_rt:commit(Cluster, ?INDEX).
 
--spec create_restaurant_json(binary(), binary(), binary()) -> binary().
-create_restaurant_json(Name, City, State) ->
+-spec create_restaurant_json(binary(), binary(), binary(), integer()) -> binary().
+create_restaurant_json(Name, City, State, Price) ->
+    PriceBinary = list_to_binary(integer_to_list(Price)),
     <<"{\"name\":\"", Name/binary, "\",",
       "\"city\":\"", City/binary, "\",",
-      "\"state\":\"", State/binary, "\"}">>.
+      "\"state\":\"", State/binary, "\",",
+      "\"price\":\"", PriceBinary/binary, "\"}">>.
 
 put_restaurant(Pid, Bucket, Key, Restaurant) ->
     Obj = riakc_obj:new(Bucket, Key, Restaurant, "application/json"),
     riakc_pb_socket:put(Pid, Obj).
 
-verify_faceted_search(Cluster, Index) ->
-    HP = hd(yz_rt:host_entries(rt:connection_info(Cluster))),
-    lager:info("Query: ~p, ~p, ~p", [HP, Index]),
-    {ok, "200", _Hdr, Res} = yz_rt:search(HP, Index, "name", "*",
-                                          "facet=true&facet.field=state"),
+verify_field_faceting(Cluster, Index) ->
+    HP = yz_rt:host_port(Cluster),
+    Params = [{facet, true}, {'facet.field', state}],
+    lager:info("Field faceting: ~p, ~p, ~p", [HP, Index, Params]),
+    {ok, "200", _Hdr, Res} = yz_rt:search(HP, Index, "name", "*", Params),
     Struct = mochijson2:decode(Res),
+    lager:info("Field faceting results: ~p", [Struct]),
 
     NumFound = kvc:path([<<"response">>, <<"numFound">>], Struct),
     ?assertEqual(5, NumFound),
@@ -116,3 +122,20 @@ verify_faceted_search(Cluster, Index) ->
                            Struct),
     ?assertEqual([<<"Ohio">>,4,<<"Kentucky">>,1], StateCounts).
 
+-define(PRICE_RANGE_1, <<"price:[1 TO 29]">>).
+-define(PRICE_RANGE_2, <<"price:[30 TO 100]">>).
+verify_query_faceting(Cluster, Index) ->
+    HP = yz_rt:host_port(Cluster),
+    Params = [{facet, true},
+              {'facet.query', "price:[1 TO 29]"},
+              {'facet.query', "price:[30 TO 100]"}],
+    lager:info("Query faceting: ~p, ~p, ~p", [HP, Index, Params]),
+    {ok, "200", _Hdr, Res} = yz_rt:search(HP, Index, "state", "Ohio", Params),
+    Struct = mochijson2:decode(Res),
+    lager:info("Query faceting results: ~p", [Struct]),
+    {struct, FacetQueries} = kvc:path([<<"facet_counts">>,
+                                       <<"facet_queries">>],
+                                      Struct),
+    ?assertMatch({_Key, 3}, lists:keyfind(?PRICE_RANGE_1, 1, FacetQueries)),
+    ?assertMatch({_Key, 1}, lists:keyfind(?PRICE_RANGE_2, 1, FacetQueries)),
+    ok.
