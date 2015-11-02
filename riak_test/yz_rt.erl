@@ -356,7 +356,7 @@ search_expect(solr, {Host, Port}, Index, Name0, Term0, Shards, Expect)
     Name = quote_unicode(Name0),
     Term = quote_unicode(Term0),
     URL = internal_solr_url(Host, Port, Index, Name, Term, Shards),
-    lager:info("Expect search ~s", [URL]),
+    lager:info("Run search ~s", [URL]),
     Opts = [{response_format, binary}],
     {ok, "200", _, R} = ibrowse:send_req(URL, [], get, [], Opts),
     verify_count(Expect, R).
